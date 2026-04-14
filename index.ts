@@ -543,11 +543,22 @@ function truncateWithEllipsisByWidth(text: string, maxWidth: number): string {
   let truncated = "";
   let truncatedWidth = 0;
 
-  for (const char of text) {
-    const charWidth = visibleWidth(char);
-    if (truncatedWidth + charWidth > targetWidth) break;
-    truncated += char;
-    truncatedWidth += charWidth;
+  // Iterate grapheme clusters instead of code points so emoji presentation
+  // sequences like "⚠️" are measured as a single visible unit. Iterating code
+  // points undercounts sequences with variation selectors and can overflow the
+  // terminal by one cell.
+  const segmenter = typeof Intl !== "undefined" && typeof Intl.Segmenter === "function"
+    ? new Intl.Segmenter(undefined, { granularity: "grapheme" })
+    : null;
+  const graphemes = segmenter
+    ? Array.from(segmenter.segment(text), (segment) => segment.segment)
+    : Array.from(text);
+
+  for (const grapheme of graphemes) {
+    const graphemeWidth = visibleWidth(grapheme);
+    if (truncatedWidth + graphemeWidth > targetWidth) break;
+    truncated += grapheme;
+    truncatedWidth += graphemeWidth;
   }
 
   return truncated.trimEnd() + "…";
@@ -1564,8 +1575,11 @@ export default function powerlineFooter(pi: ExtensionAPI) {
             if (!showLastPrompt || !lastUserPrompt) return [];
             
             const prefix = `${getFgAnsiCode("sep")}↳${ansi.reset} `;
-            const prefixWidth = 2; // "↳ "
-            const availableWidth = width - prefixWidth - 1;
+            // The rendered line includes a leading plain space before the styled prefix:
+            // ` ${prefix}${styledPrompt}`. Account for that extra column or the line can
+            // overflow by one cell (e.g. prompts starting with wide emoji like ⚠️).
+            const prefixWidth = 3; // " ↳ "
+            const availableWidth = width - prefixWidth;
             if (availableWidth < 10) return [];
             
             let promptText = lastUserPrompt.replace(/\s+/g, " ").trim();
